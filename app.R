@@ -135,7 +135,10 @@ ui <- fluidPage(
                                  ),
                                  # ---- Main Plot ----
                                  fluidRow(
-                                   plotlyOutput("ap_plot", height = "600px")  
+                                   plotlyOutput("ap_plot", height = "600px"),
+                                   verbatimTextOutput("click"),
+                                   verbatimTextOutput("brushed"),
+                                   verbatimTextOutput("selected")
                                  )
                                  
                                  ),
@@ -266,7 +269,8 @@ server <- function(input, output, session) {
       req(values$df)
       
       df <- values$df %>% 
-        filter(include == TRUE & ap_keep == TRUE)
+        filter(include == TRUE & ap_keep == TRUE) %>%
+        filter(condition == input$conditions)
       
       h1 <- df$inter_spike_int[df$inter_spike_int < 600] %>% 
         hist(breaks = "Scott", plot = FALSE)
@@ -294,21 +298,21 @@ server <- function(input, output, session) {
         #browser() 
       df <- values$df
       
-      #browser()
-      
       temp <- df %>% 
         unnest(data) %>%
-        filter(include == TRUE & ap_keep == TRUE)
+        filter(include == TRUE & ap_keep == TRUE) %>%
+        filter(condition == input$conditions)
       
-      df_key <- highlight_key(temp %>% group_by(AP_no), ~AP_no)
+    df_key <- highlight_key(temp %>% group_by(AP_no), ~AP_no)
       
       # Plot overlayed APs
       FigA <- plot_ly(source = "A") %>%
         add_lines(data = df_key,
-                  color = ~factor(breaks),
-                  colors = c("blue", "red"),
                   x = ~sample,
                   y = ~AP_v,
+                  color = ~factor(breaks),
+                  colors = c("blue", "red"),
+
                   line = list(width = 2),
                   legendgroup = ~ap_keep,
                   text = ~paste("AP no: ",
@@ -316,16 +320,17 @@ server <- function(input, output, session) {
                                 round(time, 2)
                   ),
                   customdata = ~AP_no,
-        ) %>% layout(xaxis = list(title = "", showticklabels = FALSE))
-      
+        ) %>%
+        layout(xaxis = list(title = "", showticklabels = FALSE))
+        
       
       # Calculate Average AP
       # Mean AP by condition and cluster
       mean <- temp %>%
-        group_by(ID, sample) %>% 
-        summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>% 
+        group_by(ID, sample) %>%
+        summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
-      
+
       # Plot Mean AP by cluster by condition
       FigB <- plot_ly(source = "A") %>%
         add_lines(data = mean,
@@ -343,27 +348,27 @@ server <- function(input, output, session) {
                     showlegend = FALSE,
                     line = list(color = "grey", dash = 'dot', width = 1),
                     fillcolor = 'rgba(7, 164, 181, 0.2)'
-        ) %>% 
+        ) %>%
         layout(xaxis = list(title = "", showticklabels = FALSE))
-      
+
       Fig <-subplot(FigA, FigB, shareY = TRUE) %>%
         layout(title = paste0(mean$n[1], " Action Potentials Detected"),
                yaxis = list(title = "MSNA (mV)", fixedrange = FALSE)
-               ) 
-      
+               )
+
       #### Plot mean plots by cluster and plot below All APs and Mean AP.
       mean_cluster <- temp %>%
-        group_by(ID, breaks, sample) %>% 
-        summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>% 
+        group_by(ID, breaks, sample) %>%
+        summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
-      
+
       FigC <- mean_cluster %>% ungroup() %>%
         group_by(breaks) %>%
-        group_map(~ plot_ly(data=., 
-                            x = ~sample, 
-                            y = ~mean, 
+        group_map(~ plot_ly(data=.,
+                            x = ~sample,
+                            y = ~mean,
                             showlegend = FALSE,
-                            #color = ~breaks, 
+                            #color = ~breaks,
                             type = "scatter", mode="lines") %>%
                     add_ribbons(  x = ~sample,
                                   ymin = ~lower95,
@@ -377,39 +382,20 @@ server <- function(input, output, session) {
                            xaxis = list(title = "", showticklabels = FALSE))
         ) %>%
         subplot(nrows = 1, shareX = TRUE, shareY=TRUE)
-      
-      subplot(Fig, FigC, nrows = 2) %>% 
-        highlight(on = "plotly_click", off = "plotly_relayout", debounce = 250)
-      
+
+      subplot(Fig, FigC, nrows = 2) %>%
+        layout(clickmode = "event+select") %>%
+        highlight(on = "plotly_click", off = "plotly_relayout",  
+                  selected = attrs_selected(showlegend = FALSE), debounce = 250)
+
       
     })
   
-    # # Click Register
-    # observeEvent(event_data("plotly_click", source = "A"), { 
-    #   click_results <- values$plot.click.results
-    #   
-    #   event <- event_data("plotly_click", source = "A")
-    #   
-    #   browser()
-    #   
-    #   if (event$customdata %in% click_results$customdata) {
-    #     click_results <- click_results %>% filter(customdata != event$customdata)
-    #   } else {
-    #     click_results <- click_results %>% rbind(., event)  
-    #   }
-    #   
-    # values$plot.click.results <- click_results
-    #   
-    # })
-    # 
-    # # Clear Click Register
-    # observeEvent(event_data("plotly_doubleclick", source = "A"), { 
-    #   
-    #   values$plot.click.results <- NULL
-    # })
 
     # ---- Observe: plot click ----
     observeEvent(input$toggle, {
+      
+      #browser()
       
       eventData <- event_data("plotly_click", source = "A")
       
@@ -453,7 +439,9 @@ server <- function(input, output, session) {
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_cluster_ap.csv", sep = ""))
 
-            df <- values$df %>% unnest(data) %>% filter(include == TRUE & ap_keep == TRUE)
+            df <- values$df %>% unnest(data) %>% filter(include == TRUE & ap_keep == TRUE) %>%
+              filter(condition == input$conditions)
+            
             mean <- df %>%
               group_by(ID, condition, sample) %>% 
               summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>% 
@@ -474,7 +462,6 @@ server <- function(input, output, session) {
         }
     )
     
-  
 }
 
 # Create Shiny app ----
