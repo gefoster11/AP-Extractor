@@ -52,16 +52,22 @@ ui <- fluidPage(
         # ---- Sidebar panel for inputs ----
         sidebarPanel(width = 3,
             
-            # ---- Input: Select beat file ----
-            fileInput("Signals", "Choose Signals File",
+            # ---- Input: Select Raw MSNA file ----
+            fileInput("Signals_10KHz", "Raw MSNA at 10 KHz",
+                      accept = ".txt"), #Choose .txt file with Time in column one 
+            #and the raw MSNA signal with appropriate bandpass filter in column two. Data at 10 KHz
+
+
+            # ---- Input: Select AP Locations file ----
+            fileInput("Locations", "AP Locations",
                       accept = ".txt"),
 
-            # ---- Input: Select beat file ----
-            fileInput("Locations", "Choose Locations File",
-                      accept = ".txt"),
-            
+            # ---- Input: MSNA Signals @ 25 Hz ----
+            fileInput("Signals_25KHz", "Neurogram File",
+                      accept = ".csv"),
+                        
             # ---- Input: MSNA burst/beat file ----
-            fileInput("MSNAapp_file", "Choose MSNA Burst/Beat File",
+            fileInput("MSNAapp_file", "MSNA Burst/Beat File",
                       accept = ".csv"),
             
             tags$hr(),
@@ -145,17 +151,18 @@ server <- function(input, output, session) {
     values <- reactiveValues(
         fs = NULL, # sample frequency
         df = NULL, # data
+        plot.click.results = NULL, # store plot clicks
         )
     
     # ---- Listen: delimiter inputs ----
     loadlisten <- reactive({
-        list(input$Signals$datapath, input$Locations$datapath)
+        list(input$Signals_10KHz$datapath, input$Locations$datapath)
     })
     
     # ---- Observe: data load - df ----
     observeEvent(loadlisten(), {
         
-        req(input$Signals$datapath, input$Locations$datapath)
+        req(input$Signals_10KHz$datapath, input$Locations$datapath)
       
       #browser()  
       
@@ -164,7 +171,7 @@ server <- function(input, output, session) {
             locations <- read_tsv(file = input$Locations$datapath) 
             
             # load signals
-            signals <- read_tsv(file = input$Signals$datapath)
+            signals <- read_tsv(file = input$Signals_10KHz$datapath)
             
             # determine and set fs
             fs <- round(1/(signals$time[2] - signals$time[1]), 1)
@@ -373,15 +380,41 @@ server <- function(input, output, session) {
       
       subplot(Fig, FigC, nrows = 2) %>% 
         highlight(on = "plotly_click", off = "plotly_relayout", debounce = 250)
-
+      
+      
     })
-    
+  
+    # # Click Register
+    # observeEvent(event_data("plotly_click", source = "A"), { 
+    #   click_results <- values$plot.click.results
+    #   
+    #   event <- event_data("plotly_click", source = "A")
+    #   
+    #   browser()
+    #   
+    #   if (event$customdata %in% click_results$customdata) {
+    #     click_results <- click_results %>% filter(customdata != event$customdata)
+    #   } else {
+    #     click_results <- click_results %>% rbind(., event)  
+    #   }
+    #   
+    # values$plot.click.results <- click_results
+    #   
+    # })
+    # 
+    # # Clear Click Register
+    # observeEvent(event_data("plotly_doubleclick", source = "A"), { 
+    #   
+    #   values$plot.click.results <- NULL
+    # })
+
     # ---- Observe: plot click ----
     observeEvent(input$toggle, {
       
       eventData <- event_data("plotly_click", source = "A")
       
       if ("customdata" %in% names(eventData)) {
+        
         
         df <- isolate(values$df)
         ap_no <- eventData$customdata
@@ -407,7 +440,7 @@ server <- function(input, output, session) {
     output$save <- downloadHandler(
 
         filename = function() {
-            paste(tools::file_path_sans_ext(input$Signals$name), "-ape.zip", sep = "")
+            paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-ape.zip", sep = "")
         },
         content = function(file){
 
@@ -416,9 +449,9 @@ server <- function(input, output, session) {
           owd <- setwd(tempdir())
           on.exit(setwd(owd))
 
-            fileName <- c(paste(tools::file_path_sans_ext(input$Signals$name), "-all_aps.csv", sep = ""),
-                          paste(tools::file_path_sans_ext(input$Signals$name), "-mean_ap.csv", sep = ""),
-                          paste(tools::file_path_sans_ext(input$Signals$name), "-mean_cluster_ap.csv", sep = ""))
+            fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
+                          paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
+                          paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_cluster_ap.csv", sep = ""))
 
             df <- values$df %>% unnest(data) %>% filter(include == TRUE & ap_keep == TRUE)
             mean <- df %>%
