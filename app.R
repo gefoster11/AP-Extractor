@@ -122,23 +122,9 @@ ui <- fluidPage(
                                  ),
                                  # ---- Horizontal line ----
                                  tags$hr(),
-                                 
-                                 fluidRow(
-                                   # ---- Input: RangeSlider Scale ----
-                                   column(width = 3, align = "center",
-                                          actionButton("toggle", "Remove AP", width = "75%"),
-                                          bsTooltip("toggle", "Removed selected AP",
-                                                    "right", options = list(container = "body")),
-                                          tags$hr()
-                                   ),
-                                   
-                                 ),
                                  # ---- Main Plot ----
                                  fluidRow(
-                                   plotlyOutput("ap_plot", height = "600px"),
-                                   verbatimTextOutput("click"),
-                                   verbatimTextOutput("brushed"),
-                                   verbatimTextOutput("selected")
+                                   plotlyOutput("ap_plot", height = "600px")
                                  )
                                  
                                  ),
@@ -154,7 +140,6 @@ server <- function(input, output, session) {
     values <- reactiveValues(
         fs = NULL, # sample frequency
         df = NULL, # data
-        plot.click.results = NULL, # store plot clicks
         )
     
     # ---- Listen: delimiter inputs ----
@@ -180,7 +165,7 @@ server <- function(input, output, session) {
             fs <- round(1/(signals$time[2] - signals$time[1]), 1)
             values$fs <- fs
 
-            withProgress(message = "Processing Data - be patient!", {
+            withProgress(message = "Processing Data", {
             df <- AP_extract(locations, signals) %>%
               mutate(ap_keep = TRUE)
             
@@ -243,7 +228,7 @@ server <- function(input, output, session) {
       
       df <- values$df %>% 
         select(!c(mid, lower_bound))
-        
+
       breaks <- find_cluster_bins(df) # Helper function
       
       h <- df$amplitude[df$include == TRUE & df$ap_keep == TRUE] %>% 
@@ -303,6 +288,8 @@ server <- function(input, output, session) {
         filter(include == TRUE & ap_keep == TRUE) %>%
         filter(condition == input$conditions)
       
+      numAP <- length(unique(temp$AP_no))  
+      
     df_key <- highlight_key(temp %>% group_by(AP_no), ~AP_no)
       
       # Plot overlayed APs
@@ -352,7 +339,7 @@ server <- function(input, output, session) {
         layout(xaxis = list(title = "", showticklabels = FALSE))
 
       Fig <-subplot(FigA, FigB, shareY = TRUE) %>%
-        layout(title = paste0(mean$n[1], " Action Potentials Detected"),
+        layout(title = paste0(numAP, " Action Potentials Detected"),
                yaxis = list(title = "MSNA (mV)", fixedrange = FALSE)
                )
 
@@ -385,15 +372,16 @@ server <- function(input, output, session) {
 
       subplot(Fig, FigC, nrows = 2) %>%
         layout(clickmode = "event+select") %>%
-        highlight(on = "plotly_click", off = "plotly_relayout",  
-                  selected = attrs_selected(showlegend = FALSE), debounce = 250)
+        highlight(on = "plotly_hover", off = "plotly_relayout",  
+                  selected = attrs_selected(showlegend = FALSE), debounce = 250) %>%
+        event_register('plotly_click')
 
       
     })
   
 
     # ---- Observe: plot click ----
-    observeEvent(input$toggle, {
+    observeEvent(event_data("plotly_click", source = "A"), { #input$toggle, {
       
       #browser()
       
