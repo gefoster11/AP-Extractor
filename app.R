@@ -9,8 +9,10 @@
 
 source("./functions/helper_functions.R")
 
-# Sets max file size to 500 Mb
-options(shiny.maxRequestSize = 500*1024^2, scipen = 999)
+# Sets max file size to 800 Mb
+options(shiny.maxRequestSize = 800*1024^2,
+        shiny.launch.browser = .rs.invokeShinyWindowExternal,
+        scipen = 999)
 
 # Package Dependency
 packages = c("remotes",
@@ -76,11 +78,6 @@ ui <- fluidPage(
             selectizeInput('conditions', "Choose Analysis Conditions", choices = "", multiple = TRUE, width = "90%"),
             bsTooltip("conditions", "Choose Conditions to Analyze", 
                       "right", options = list(container = "body")),
-            
-            # ---- Input: Analysis conditions ----
-            selectizeInput('baseline_condition', "Which condition is baseline?", choices = "", width = "90%"),
-            bsTooltip("baseline_condition", "Choose baseline condition", 
-                      "right", options = list(container = "body")),
         
             # ---- Output sample frequency ----
             textOutput("fs"),
@@ -94,7 +91,7 @@ ui <- fluidPage(
             
             # ---- Horizontal line ----
             tags$hr(),
-
+            
             downloadButton("save", "Download"),
             bsTooltip("save", "saves the selected data to a csv file", "right", 
                       options = list(container = "body")),
@@ -122,6 +119,14 @@ ui <- fluidPage(
                                  ),
                                  # ---- Horizontal line ----
                                  tags$hr(),
+                                 
+                                 # ---- Input: Choose Cluster ----
+                                 selectizeInput('Cluster', "Choose Cluster", choices = "", width = "20%"),
+                                 bsTooltip("Cluster", "Choose cluster to plot", 
+                                           "right", options = list(container = "body")),
+                                 
+                                 tags$hr(),
+                                 
                                  # ---- Main Plot ----
                                  fluidRow(
                                    plotlyOutput("ap_plot", height = "600px")
@@ -135,7 +140,7 @@ ui <- fluidPage(
 
 # ---- Define server logic ----
 server <- function(input, output, session) {
-    
+  
     # ---- initialize reactive values ----
     values <- reactiveValues(
         fs = NULL, # sample frequency
@@ -189,8 +194,10 @@ server <- function(input, output, session) {
             values$df <- df
             
             myChoices <- unique(df$condition)
+            myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
+            
             updateSelectizeInput(session, "conditions", choices = myChoices)
-            updateSelectizeInput(session, "baseline_condition", choices = myChoices)
+            updateSelectizeInput(session, "Cluster", choices = myClusters, selected = "ALL")
             
             }
             )
@@ -220,18 +227,19 @@ server <- function(input, output, session) {
     
     
     # ---- Re-cluster data when conditions change ----
-    observe({
+    observe(priority = 1, {
       
-      #### Unsure if this part is working yet!
-      
-      req(values$df, input$conditions, input$baseline_condition)
-      
+      req(values$df, input$conditions)
+    
       df <- values$df %>% 
         select(!c(mid, lower_bound))
 
-      breaks <- find_cluster_bins(df) # Helper function
+         
+      breaks <- find_cluster_bins(df %>% 
+                                    filter(condition %in% input$conditions) %>%
+                                    filter(include == TRUE & ap_keep == TRUE )) # Helper function
       
-      h <- df$amplitude[df$include == TRUE & df$ap_keep == TRUE] %>% 
+      h <- df$amplitude[df$include == TRUE & df$ap_keep == TRUE & df$cluster %in% input$conditions] %>% 
         hist(breaks = breaks, plot = FALSE)  
       
       df <- df %>% 
@@ -245,6 +253,9 @@ server <- function(input, output, session) {
         df$lower_bound <- h$breaks[df$cluster]
       
       values$df <- df %>% ungroup() %>% unnest(data)
+      
+      myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
+      updateSelectizeInput(session, "Cluster", selected = isolate(input$Cluster), choices = myClusters)
       
     })
     
@@ -280,17 +291,27 @@ server <- function(input, output, session) {
     # ---- Output: Create AP Plot ----
     output$ap_plot <- renderPlotly({
       req(values$df)
-        #browser() 
+       # browser() 
       df <- values$df
       
       temp <- df %>% 
         unnest(data) %>%
         filter(include == TRUE & ap_keep == TRUE) %>%
-        filter(condition == input$conditions)
+        filter(condition == input$conditions) # if want multiple cluster selection could use condition %in% input$conditions
       
-      numAP <- length(unique(temp$AP_no))  
+      SelectedCluster <- input$Cluster
       
-    df_key <- highlight_key(temp %>% group_by(AP_no), ~AP_no)
+      #browser() 
+    
+      if (SelectedCluster == "ALL") {
+        temp2 <- temp
+      } else {
+        temp2 <- temp %>% filter(cluster == as.numeric(SelectedCluster))
+      }
+
+    numAP <- length(unique(temp2$AP_no))  
+        
+    df_key <- highlight_key(temp2 %>% group_by(AP_no), ~AP_no)
       
       # Plot overlayed APs
       FigA <- plot_ly(source = "A") %>%
@@ -313,7 +334,7 @@ server <- function(input, output, session) {
       
       # Calculate Average AP
       # Mean AP by condition and cluster
-      mean <- temp %>%
+      mean <- temp2 %>%
         group_by(ID, sample) %>%
         summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
@@ -390,7 +411,7 @@ server <- function(input, output, session) {
       if ("customdata" %in% names(eventData)) {
         
         
-        df <- isolate(values$df)
+        df <- values$df
         ap_no <- eventData$customdata
         
         df$ap_keep[df$AP_no == ap_no] <- !df$ap_keep[df$AP_no == ap_no]
@@ -408,7 +429,6 @@ server <- function(input, output, session) {
         df$ap_keep <- TRUE
         values$df <- df
     })
-    
     
     # ---- Downloadable csv of selected dataset ----
     output$save <- downloadHandler(
@@ -428,29 +448,29 @@ server <- function(input, output, session) {
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_cluster_ap.csv", sep = ""))
 
             df <- values$df %>% unnest(data) %>% filter(include == TRUE & ap_keep == TRUE) %>%
-              filter(condition == input$conditions)
-            
+              filter(condition %in% input$conditions)
+
             mean <- df %>%
-              group_by(ID, condition, sample) %>% 
-              summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>% 
+              group_by(ID, condition, sample) %>%
+              summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
               mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
-            
+
             mean_cluster <- df %>%
-              group_by(ID, condition, cluster, sample) %>% 
-              summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>% 
+              group_by(ID, condition, cluster, sample) %>%
+              summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
               mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
-            
-              write_csv(df, fileName[[1]])  
+
+              write_csv(df, fileName[[1]])
               write_csv(mean, fileName[[2]])
               write_csv(mean_cluster, fileName[[3]])
-          
+
           #create the zip file
           zip(file,fileName)
 
         }
     )
-    
-}
+     
+ }
 
 # Create Shiny app ----
 thematic::thematic_shiny()
