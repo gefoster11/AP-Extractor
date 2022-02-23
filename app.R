@@ -297,7 +297,7 @@ server <- function(input, output, session) {
       temp <- df %>% 
         unnest(data) %>%
         filter(include == TRUE & ap_keep == TRUE) %>%
-        filter(condition == input$conditions) # if want multiple cluster selection could use condition %in% input$conditions
+        filter(condition %in% input$conditions)
       
       SelectedCluster <- input$Cluster
       
