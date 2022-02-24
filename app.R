@@ -466,8 +466,6 @@ server <- function(input, output, session) {
 
           #create the zip file
           zip(file,fileName)
-                
-          stopApp()
         }
      )
      
