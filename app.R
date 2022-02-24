@@ -219,7 +219,7 @@ server <- function(input, output, session) {
       req(values$df, input$conditions)
         
         return(values$df %>% 
-                 plotly::filter(condition == input$conditions) %>%
+                 plotly::filter(condition %in% input$conditions) %>%
                  select(!data)
                )
       
@@ -266,7 +266,7 @@ server <- function(input, output, session) {
       
       df <- values$df %>% 
         filter(include == TRUE & ap_keep == TRUE) %>%
-        filter(condition == input$conditions)
+        filter(condition %in% input$conditions)
       
       h1 <- df$inter_spike_int[df$inter_spike_int < 600] %>% 
         hist(breaks = "Scott", plot = FALSE)
