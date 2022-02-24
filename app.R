@@ -196,7 +196,7 @@ server <- function(input, output, session) {
             myChoices <- unique(df$condition)
             myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
             
-            updateSelectizeInput(session, "conditions", choices = myChoices)
+            updateSelectizeInput(session, "conditions", choices = myChoices, selected = myChoices)
             updateSelectizeInput(session, "Cluster", choices = myClusters, selected = "ALL")
             
             }
