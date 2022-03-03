@@ -41,7 +41,7 @@ AP_extract <- function(loc, df) {
   AP <- AP %>% 
     mutate(amplitude = as.numeric(map(data, amp)), 
            minimum = as.numeric(map(data, minAP)), 
-           include = inter_spike_int > 2)
+           include = inter_spike_int > 3)
   AP
   
 }
