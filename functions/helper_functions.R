@@ -1,6 +1,5 @@
 #Required Functions
 
-
 #### action potential extraction ####
 AP_extract <- function(loc, df) {
   # loc <- AP_location
@@ -41,7 +40,7 @@ AP_extract <- function(loc, df) {
   AP <- AP %>% 
     mutate(amplitude = as.numeric(map(data, amp)), 
            minimum = as.numeric(map(data, minAP)), 
-           include = inter_spike_int > 3)
+           include = inter_spike_int > 2)
   AP
   
 }
@@ -76,13 +75,13 @@ find_cluster_bins <- function(x) {
                              breaks = h$breaks, mids = h$mids, bin_width = h$breaks - lag(h$breaks))) %>%
       as.data.frame()
   }
-  binwidth <- min(temp$bin_width, na.rm = TRUE) %>% round(2)
+  binwidth <- min(temp$bin_width, na.rm = TRUE) # %>% round(2) removed on April 6 2022
   max_bin_mid <- max(temp$mids)
   min_amp <- min(x$amplitude)
   
   bin_centre <- seq(from = max_bin_mid, to = min_amp-(binwidth/2), by = binwidth*-1) %>% rev()
   breaks <- seq(from = min(bin_centre) - binwidth/2, 
-                to = max(bin_centre) + binwidth/2, by = binwidth)
+                to = max(bin_centre) + binwidth/2 + binwidth, by = binwidth) # added +binwidth to deal with breaks not spanning x range on April 6 2022.
   breaks  
 }
 
