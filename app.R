@@ -24,7 +24,11 @@ packages = c("remotes",
              "thematic",
              "shinythemes",
              "signal",
-             "features")
+             "features",
+             "kableExtra",
+             "DT",
+             "ggpubr",
+             "stringr")
 
 package.check <- lapply(
   packages,
@@ -111,7 +115,22 @@ ui <- fluidPage(
             # ---- Output: Tabset w/ parsing table, selected data, and plot ----
             tabsetPanel(type = "tabs",
                         tabPanel("Data", 
-                                 dataTableOutput("data")),
+                                 fluidRow(
+                                   tags$div(
+                                     HTML("<p>Click on table rows to toggle action potential 
+                                          keep status (i.e. True/False)</p><br>")),
+                        
+                                 ),
+                                 fluidRow(
+                                   DT::dataTableOutput("data")  
+                                 ),
+                                 fluidRow(
+                                   DT::dataTableOutput("absolute_summary")  
+                                 ),
+                                 fluidRow(
+                                   DT::dataTableOutput("nCluster_summary")  
+                                 ),
+                                 ),
                         tabPanel("Action Potential Selection",
 
                                  fluidRow(
@@ -133,6 +152,36 @@ ui <- fluidPage(
                                  )
                                  
                                  ),
+                        tabPanel("AP Characteristics & Signal Check",
+                                 # ---- Main Plot ----
+                                 fluidRow(
+                                   #### SNR Check ####
+                                   tableOutput("SNRCheck")
+                                 ),
+                                 fluidRow(
+                                   #### AP Characteristics Plot ####
+                                   plotlyOutput("ap_characteristics2", height = "600px")
+                                 ),
+                                 
+                                 ),
+                        
+                        tabPanel("Time Series",
+                                 selectizeInput('conditions2', "Choose Conditions to Plot", choices = "", multiple = FALSE, width = "20%"),
+                                 bsTooltip("conditions2", "Choose Conditions to Plot", 
+                                           "right", options = list(container = "body")),
+                                 # ---- Main Plot ----
+                                 fluidRow(
+                                   #### time series plot ####
+                                   plotlyOutput("TimeSeries", height = "600px")
+                                 )),
+                        
+                        tabPanel("Correlograms",
+                                 # ---- Main Plot ----
+                                 fluidRow(
+                                   #### Correlograms ####
+                                   plotOutput("correlograms", height = "600px")
+                                 )),
+
                         )
             )
     )
@@ -143,13 +192,20 @@ server <- function(input, output, session) {
   
     # ---- initialize reactive values ----
     values <- reactiveValues(
-        fs = NULL, # sample frequency
-        df = NULL, # data
+        # fs = NULL, # sample frequency
+        # df = NULL, # data
+        # beat = NULL, #beat/burst data
+        # signals25 = NULL, #neurogram
         )
     
-    # ---- Listen: delimiter inputs ----
+    # ---- Listen: AP data inputs ----
     loadlisten <- reactive({
         list(input$Signals_10KHz$datapath, input$Locations$datapath)
+    })
+    
+    # ---- Listen: beat/burst data inputs ----
+    loadlisten_beat <- reactive({
+      list(input$Signals_25KHz$datapath, input$MSNAapp_file$datapath)
     })
     
     # ---- Observe: data load - df ----
@@ -170,34 +226,50 @@ server <- function(input, output, session) {
             fs <- round(1/(signals$time[2] - signals$time[1]), 1)
             values$fs <- fs
 
-            withProgress(message = "Processing Data", {
+            withProgress(message = "Extracting APs", {
             df <- AP_extract(locations, signals) %>%
               mutate(ap_keep = TRUE)
+            
+            #browser()
             
             # determine clusters
             breaks <- find_cluster_bins(df) # Helper function
             
-            h <- df$amplitude[df$include == TRUE] %>% 
+            h <- df$ap_amplitude[df$ap_include == TRUE] %>% 
               hist(breaks = breaks, plot = FALSE)  
             
             df <- df %>% 
               ungroup() %>% 
-              mutate(breaks = cut(.$amplitude, breaks = h$breaks), 
-                     cluster = cut(.$amplitude, breaks = h$breaks, labels = FALSE, ordered_result = TRUE)) %>%
+              mutate(breaks = cut(.$ap_amplitude, breaks = h$breaks), 
+                     cluster = cut(.$ap_amplitude, breaks = h$breaks, labels = FALSE, ordered_result = TRUE)) %>%
               group_by(cluster) %>% 
               nest()
             
             df$mid <- h$mids[df$cluster]
             df$lower_bound <- h$breaks[df$cluster]
             
-            df <- df %>% ungroup() %>% unnest(data)
+            #browser()
+            
+            df <- df %>% 
+              ungroup() %>% 
+              unnest(data) %>%
+              relocate(ID, condition) %>%
+              arrange(ap_no)
+            
+            df <- df %>%
+              mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% round()) %>%
+              relocate(ncluster, .after = cluster)
+            
             values$df <- df
+            values$signals10khz <- signals
+            values$times <- signals %>% group_by(ID, condition) %>% summarise(t_min = min(time), t_max = max(time))
             
             myChoices <- unique(df$condition)
             myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
             
             updateSelectizeInput(session, "conditions", choices = myChoices, selected = myChoices)
             updateSelectizeInput(session, "Cluster", choices = myClusters, selected = "ALL")
+            updateSelectizeInput(session, "conditions2", choices = myChoices, selected = "")
             
             }
             )
@@ -207,6 +279,68 @@ server <- function(input, output, session) {
         )
     })
 
+    # ---- Observe: data load - df ----
+    observeEvent(loadlisten_beat(), {
+
+      req(input$Signals_10KHz$datapath,
+          input$Locations$datapath,
+          input$Signals_25KHz$datapath,
+          input$MSNAapp_file$datapath,
+          values$df,
+          input$conditions)
+
+      tryCatch( {
+        # load locations
+        
+        beat <- read_csv(file = input$MSNAapp_file$datapath)
+
+        # load signals
+        signals25 <- read_csv(file = input$Signals_25KHz$datapath)
+
+        values$beat <- beat
+        values$signals25 <- signals25
+        
+        withProgress(message = "Aligning APs to beats", {
+          times <- values$times
+          ap_beat <- values$beat
+          APs <- values$df
+          signal <- values$signals10khz
+          
+          df <- link_AP(times, ap_beat, APs, signal)
+          values$df <- df %>%
+            relocate(ID, condition) %>%
+            arrange(beat_no, ap_no)
+        })
+
+      }, error = function(e) {stop(safeError(e))}
+      )
+    })
+    
+    # ---- Observe: summarize data - summary_df ----
+    observe({
+      
+      req(input$Signals_10KHz$datapath,
+          input$Locations$datapath,
+          input$Signals_25KHz$datapath,
+          input$MSNAapp_file$datapath,
+          values$df,
+          input$conditions)
+
+      df <- values$df
+
+      if("beat_no" %in% colnames(df)) {
+
+              summary_df <- Absolute_Summary(df)
+              summary_df <- nCluster_Summary(summary_df %>% unnest(data))
+
+              values$summary_df <- summary_df
+      }
+
+     
+
+    })
+    
+    
     # ---- Output: sample frequency ----
     output$fs <- renderText({
         fs <- values$fs
@@ -215,15 +349,90 @@ server <- function(input, output, session) {
     
     
     # ---- Output: Data Table ----
-    output$data <- renderDataTable({
+    output$data <- DT::renderDataTable({
       req(values$df, input$conditions)
-        
-        return(values$df %>% 
+
+        df <- values$df
+
+        return(df %>% 
                  plotly::filter(condition %in% input$conditions) %>%
                  select(!data)
                )
       
-    }, options = list(pageLength = 10))
+    }, options = list(pageLength = 10), filter = "top", caption = "All Data")
+    
+    output$SNRCheck <- function() {
+      req(values$df, input$conditions, values$beat, values$signals25)
+      
+      df <- values$df %>% 
+        filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        filter(condition %in% input$conditions)
+      
+      df %>% select(ap_noise, SNR, condition) %>% group_by(condition) %>% summarize(n = n(), 
+                                                                                    "Noise" = round(mean(ap_noise), 3), 
+                                                                                    "sd SNR" = round(sd(SNR), 2),
+                                                                                    "SNR" = round(mean(SNR), 2)
+                                                                                    ) %>% 
+        relocate("SNR", .before = "sd SNR") %>%
+        mutate("SNR > 3.75" = "SNR" > 3.75) %>%
+        kable(., caption = "SNR Quality Check - Is SNR sufficiently high (> 3.75) to minimize false positive detection?") %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+        column_spec(1, bold = T) %>%
+        add_footnote("See Salmanpour et al 2010") %>%
+        print()
+      
+    }
+    
+    # ---- Output: Absolute Summary Data Table ----
+    output$absolute_summary <- DT::renderDataTable({
+      req(values$summary_df, input$conditions)
+      
+      summary_df <- values$summary_df
+
+      #browser()
+      
+      temp <- summary_df %>% ungroup() %>%
+        select(ID, condition, Absolute_Summary) %>%
+        unnest(Absolute_Summary) %>%
+        group_by(ID, condition) %>%
+        mutate_all(unlist) %>%
+        summarize_all(unique) %>%
+        rename_all(~stringr::str_replace(., "Absolute_Summary_", "")) %>%
+        pivot_longer(3:last_col()) %>%
+        arrange(ID, name, condition) %>%
+        mutate(name = factor(name))
+        
+
+      return(temp %>% 
+               plotly::filter(condition %in% input$conditions)
+      )
+      
+    }, options = list(pageLength = 10, autoWidth = TRUE), filter = "top", caption = "Summary Data") 
+    
+    
+    # ---- Output: nCluster Summary Data Table ----
+    output$nCluster_summary <- DT::renderDataTable({
+      req(values$summary_df, input$conditions)
+      
+      summary_df <- values$summary_df
+      
+      #browser()
+      
+      temp <- summary_df %>% select(ID, condition, ncluster, nCluster_Summary) %>%
+        unnest(nCluster_Summary) %>%
+        group_by(ID, condition, ncluster) %>%
+        mutate_all(unlist) %>%
+        summarize_all(unique) %>%
+        pivot_longer(4:last_col()) %>%
+        arrange(ID, name, ncluster, condition) %>% 
+        mutate(name = factor(name))
+      
+      return(temp %>% 
+               plotly::filter(condition %in% input$conditions)
+               
+      )
+      
+    }, options = list(pageLength = 10, autoWidth = TRUE), filter = "top", caption = "Summary Data of Normalized Clusters")
     
     
     # ---- Re-cluster data when conditions change ----
@@ -237,25 +446,45 @@ server <- function(input, output, session) {
          
       breaks <- find_cluster_bins(df %>% 
                                     filter(condition %in% input$conditions) %>%
-                                    filter(include == TRUE & ap_keep == TRUE )) # Helper function
+                                    filter(ap_include == TRUE & ap_keep == TRUE )) # Helper function
       
-      h <- df$amplitude[df$include == TRUE & df$ap_keep == TRUE & df$cluster %in% input$conditions] %>% 
+      h <- df$ap_amplitude[df$ap_include == TRUE & df$ap_keep == TRUE & df$cluster %in% input$conditions] %>% 
         hist(breaks = breaks, plot = FALSE)  
+      
+      #browser()
       
       df <- df %>% 
         ungroup() %>% 
-        mutate(breaks = cut(.$amplitude, breaks = h$breaks), 
-               cluster = cut(.$amplitude, breaks = h$breaks, labels = FALSE, ordered_result = TRUE)) %>%
+        mutate(breaks = cut(.$ap_amplitude, breaks = h$breaks), 
+               cluster = cut(.$ap_amplitude, breaks = h$breaks, labels = FALSE, ordered_result = TRUE)) %>%
         group_by(cluster) %>% 
         nest()
       
         df$mid <- h$mids[df$cluster]
         df$lower_bound <- h$breaks[df$cluster]
       
-      values$df <- df %>% ungroup() %>% unnest(data)
-      
-      myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
-      updateSelectizeInput(session, "Cluster", selected = isolate(input$Cluster), choices = myClusters)
+       df <- df %>% 
+          ungroup() %>% 
+          unnest(data) %>%
+          relocate(ID, condition) %>%
+          arrange(ap_no)
+       
+       df <- df %>%
+         mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% round()) %>%
+         relocate(ncluster, .after = cluster)
+       
+        
+        if("beat_no" %in% colnames(df)) {
+          df <- df %>% arrange(beat_no, ap_no) %>% 
+            relocate(mid, lower_bound, .after = breaks)
+        }
+
+        myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
+        updateSelectizeInput(session, "Cluster", 
+                             selected = isolate(input$Cluster), 
+                             choices = myClusters)    
+          
+      values$df <- df
       
     })
     
@@ -265,21 +494,21 @@ server <- function(input, output, session) {
       req(values$df)
       
       df <- values$df %>% 
-        filter(include == TRUE & ap_keep == TRUE) %>%
+        filter(ap_include == TRUE & ap_keep == TRUE) %>%
         filter(condition %in% input$conditions)
       
-      h1 <- df$inter_spike_int[df$inter_spike_int < 600] %>% 
+      h1 <- df$inter_ap_int[df$inter_ap_int < 600] %>% 
         hist(breaks = "Scott", plot = FALSE)
       h1$probs <- h1$counts/sum(h1$counts)*100
       p1 <- plot_ly(x = h1$mids, y = h1$probs) %>% 
-        add_bars(name = "Inter Spike Interval") %>% 
-        layout(xaxis = list(title = "Inter-Spike Interval (ms)"), yaxis = list(title = "Probability (%)"))
-      h2 <- df$amplitude %>% 
+        add_bars(name = "Inter AP Interval") %>% 
+        layout(xaxis = list(title = "Inter-AP Interval (ms)"), yaxis = list(title = "Probability (%)"))
+      h2 <- df$ap_amplitude %>% 
         hist(breaks = "Scott", plot = FALSE)  
       h2$probs <- h2$counts/sum(h2$counts)*100  
       p2 <- plot_ly(x = h2$mids, y = h2$probs) %>% 
-        add_bars(name = "Amplitude") %>% 
-        layout(xaxis = list(title = "Amplitude (V)"), yaxis = list(title = "Probability (%)"))
+        add_bars(name = "AP Amplitude") %>% 
+        layout(xaxis = list(title = "AP Amplitude (V)"), yaxis = list(title = "Probability (%)"))
       
       plot <- subplot(p1, p2, titleY = TRUE, titleX = TRUE, shareY = TRUE, margin = 0.07) %>% 
         layout(showlegend = FALSE)
@@ -296,7 +525,7 @@ server <- function(input, output, session) {
       
       temp <- df %>% 
         unnest(data) %>%
-        filter(include == TRUE & ap_keep == TRUE) %>%
+        filter(ap_include == TRUE & ap_keep == TRUE) %>%
         filter(condition %in% input$conditions)
       
       SelectedCluster <- input$Cluster
@@ -309,25 +538,25 @@ server <- function(input, output, session) {
         temp2 <- temp %>% filter(cluster == as.numeric(SelectedCluster))
       }
 
-    numAP <- length(unique(temp2$AP_no))  
+    numAP <- length(unique(temp2$ap_no))  
         
-    df_key <- highlight_key(temp2 %>% group_by(AP_no), ~AP_no)
+    df_key <- highlight_key(temp2 %>% group_by(ap_no), ~ap_no)
       
       # Plot overlayed APs
       FigA <- plot_ly(source = "A") %>%
         add_lines(data = df_key,
                   x = ~sample,
-                  y = ~AP_v,
+                  y = ~ap_v,
                   color = ~factor(breaks),
                   colors = c("blue", "red"),
 
                   line = list(width = 2),
                   legendgroup = ~ap_keep,
                   text = ~paste("AP no: ",
-                                round(AP_no, 2), '<br>time:',
-                                round(time, 2)
+                                round(ap_no, 2), '<br>time:',
+                                round(ap_time, 2)
                   ),
-                  customdata = ~AP_no,
+                  customdata = ~ap_no,
         ) %>%
         layout(xaxis = list(title = "", showticklabels = FALSE))
         
@@ -336,7 +565,7 @@ server <- function(input, output, session) {
       # Mean AP by condition and cluster
       mean <- temp2 %>%
         group_by(ID, sample) %>%
-        summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
+        summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
 
       # Plot Mean AP by cluster by condition
@@ -367,7 +596,7 @@ server <- function(input, output, session) {
       #### Plot mean plots by cluster and plot below All APs and Mean AP.
       mean_cluster <- temp %>%
         group_by(ID, breaks, sample) %>%
-        summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
+        summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
 
       FigC <- mean_cluster %>% ungroup() %>%
@@ -401,6 +630,141 @@ server <- function(input, output, session) {
     })
   
 
+    # ---- Output: Create AP Plot by amplitude cluster ----
+    output$ap_characteristics2 <- renderPlotly({
+      req(values$df, input$conditions, values$beat, values$signals25)
+      
+      df <- values$df %>% 
+        filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        filter(condition %in% input$conditions)
+      
+      df <- df %>% select(condition, ap_no, ap_amplitude, ap_latency, inter_ap_int, SNR) %>%
+        pivot_longer(cols = c(ap_amplitude:SNR), names_to = "variable")
+      
+      p <- df %>% ggplot(aes(x = value, fill = condition)) +
+        geom_density(alpha = 0.5) +
+        facet_wrap(~variable, scales = "free", labeller = as_labeller(c(ap_amplitude = "Amplitude (mV)", 
+                                                                        ap_latency = "Latency (s)", 
+                                                                        inter_ap_int = "Inter-AP Interval (ms)", SNR = "Signal-to-Noise Ratio"))) + 
+        scale_x_continuous(expand = c(0,0)) +
+        scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+        ggtitle("Action Potential Characteristics") +
+        theme_bw() +
+        theme(legend.position = "bottom", legend.title = element_blank(), axis.title.x = element_blank())
+      ggplotly(p)
+    })
+    
+    # ---- Output: Create time series plot ----
+    output$TimeSeries <- renderPlotly({
+      req(values$df, input$conditions2, values$beat, values$signals25)
+      
+      #browser()
+      
+      df <- values$df %>% 
+        filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        filter(condition %in% input$conditions2)
+      
+      t_min <- df$ap_time %>% min() 
+      t_max <- df$ap_time %>% max()
+      
+      signals25 <- values$signals25 %>% filter(MSNA_time >= t_min & MSNA_time <= t_max)
+      ap_linerange <- df$ap_time %>% cbind(ap_time = ., lower = 0, upper = 1) %>% as.data.frame() %>% pivot_longer(c("upper", "lower"))
+      
+      signals10 <- values$signals10khz %>% filter(time >= t_min & time <= t_max)
+      
+      figA <- plot_ly() %>%
+        add_lines(data = signals25,
+                  x = ~MSNA_time,
+                  y = ~BP,
+                  name = "BP",
+                  line = list(color = "black")
+        ) %>%
+        layout(yaxis = list(title = "BP (mm Hg)"))
+      
+      figB <- plot_ly() %>%
+        add_lines(data = signals25,
+                  x = ~MSNA_time,
+                  y = ~ECG,
+                  name = "ECG",
+                  line = list(color = "black")
+        ) %>%
+        layout(yaxis = list(title = "ECG (V)"))
+      
+      figC <- plot_ly() %>%
+        add_lines(data = signals25,
+                  x = ~MSNA_time,
+                  y = ~MSNA_vjust,
+                  name = "Neurogram",
+                  line = list(color = "black")
+        ) %>%
+        layout(yaxis = list(title = "MSNA (V)"))
+ 
+      figD <- plot_ly(ap_linerange) %>% group_by(ap_time) %>%
+        add_lines(
+                  x = ~ap_time,
+                  y = ~value,
+                  name = "AP",
+                  line = list(color = "black")
+        ) %>%
+        layout(yaxis = list(title = "AP", fixedrange = FALSE),
+               xaxis = list(title = "Time (s)")) %>%
+        rangeslider()
+      
+      subplot(figA, figB, figC, figD, nrows = 4, shareX =TRUE, titleY = TRUE, heights = c(0.25,0.25,0.4,0.1))
+      
+    })
+    
+    
+  # ---- Output: Correlograms ----
+    output$correlograms <- renderPlot({
+      
+      req(values$df, input$conditions, values$beat, values$signals25)
+      
+     # browser()
+      
+      df <- values$df 
+      
+      ap_time <- df %>% filter(ap_include == TRUE & ap_keep == TRUE) %>% filter(condition %in% input$conditions) %>% 
+        group_by(condition, ap_no) %>% 
+        summarise(TIME = unique(ap_time)) %>% select(!ap_no) %>% group_by(condition) %>% nest(spike = TIME)
+      R_time <- df %>% filter(condition %in% input$conditions) %>% group_by(condition, beat_no) %>% summarise(TIME = unique(beat_time)) %>% select(!beat_no) %>% 
+        group_by(condition) %>% nest(R = TIME)
+      burst_time <- df %>% filter(condition %in% input$conditions) %>% select(condition, beat_no, burst_time) %>% filter(!is.na(burst_time)) %>% group_by(condition, beat_no) %>%
+        summarise(TIME = unique(burst_time)) %>% select(!beat_no) %>% group_by(condition) %>% nest(burst = TIME)
+      
+    cor_df <- full_join(R_time, burst_time, by = "condition") %>% full_join(., ap_time, by = "condition")
+      
+    cor_df <- cor_df %>% mutate(burst_ECG = map2(.x = R, .y = burst, .f = correlation_histogram),
+                                ap_ECG = map2(.x = R, .y = spike, .f = correlation_histogram))
+      
+    FigA <- cor_df %>% select(condition, burst_ECG) %>% unnest(burst_ECG) %>% 
+      ggplot(aes(x = burst_ECG)) +
+      geom_histogram(binwidth = 0.05) + #50ms binwidth
+      geom_vline(xintercept = 0, linetype = "dotted") +
+      scale_x_continuous(expand = c(0,0), limits = c(-5, +5), breaks = c(-5,-4,-3,-2,-1,0,1,2,3,4,5)) +
+      labs(x = "Time (s)", y = "Counts/bin") +
+      facet_grid(condition ~ .) +
+      ggtitle("MSNA Burst vs ECG R") +
+      theme_bw()
+    
+    FigB <- cor_df %>% select(condition, ap_ECG) %>% unnest(ap_ECG) %>% 
+      ggplot(aes(x = ap_ECG)) +
+      geom_histogram(binwidth = 0.05) + #50ms binwidth
+      geom_vline(xintercept = 0, linetype = "dotted") +
+      scale_x_continuous(expand = c(0,0), limits = c(-5, +5), breaks = c(-5,-4,-3,-2,-1,0,1,2,3,4,5)) +
+      labs(x = "Time (s)", y = "Counts/bin") +
+      facet_grid(condition ~ .) +
+      ggtitle("MSNA AP vs ECG R") +
+      theme_bw()
+    
+    ggarrange(FigA, FigB)
+
+    })
+    
+    
+    
+    
+    
     # ---- Observe: plot click ----
     observeEvent(event_data("plotly_click", source = "A"), { #input$toggle, {
       
@@ -410,11 +774,10 @@ server <- function(input, output, session) {
       
       if ("customdata" %in% names(eventData)) {
         
-        
         df <- values$df
         ap_no <- eventData$customdata
         
-        df$ap_keep[df$AP_no == ap_no] <- !df$ap_keep[df$AP_no == ap_no]
+        df$ap_keep[which(df$ap_no %in% ap_no)] <- !df$ap_keep[which(df$ap_no %in% ap_no)]
         
         values$df <- df
         
@@ -422,6 +785,15 @@ server <- function(input, output, session) {
       
     })
     
+    # ---- Observe: table click ----
+    observeEvent(input$data_rows_selected, {
+
+      df_selected <- input$data_rows_selected
+      df <- values$df
+      df$ap_keep[df_selected] <- !df$ap_keep[df_selected]
+      values$df <- df
+      
+    })
 
     # ---- Observe: reset ----
     observeEvent(input$reset, {
@@ -429,6 +801,7 @@ server <- function(input, output, session) {
         df$ap_keep <- TRUE
         values$df <- df
     })
+    
     
     # ---- Downloadable csv of selected dataset ----
     output$save <- downloadHandler(
@@ -442,27 +815,68 @@ server <- function(input, output, session) {
           #go to a temp dir to avoid permission issues
           owd <- setwd(tempdir())
           on.exit(setwd(owd))
-
-            fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
-                          paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
-                          paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_cluster_ap.csv", sep = ""))
-
-            df <- values$df %>% unnest(data) %>% filter(include == TRUE & ap_keep == TRUE) %>%
+            
+            df <- values$df %>% unnest(data) %>% filter(ap_include == TRUE & ap_keep == TRUE) %>%
               filter(condition %in% input$conditions)
+            df2 <- values$df %>% select(!data) %>% filter(ap_include == TRUE & ap_keep == TRUE) %>%
+                                          filter(condition %in% input$conditions)
 
+            if("beat_no" %in% colnames(df)) {            
+              fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
+                            paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps_summary.csv", sep = ""),
+                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
+                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_cluster_ap.csv", sep = ""),
+                          paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-summary.csv", sep = ""),
+                          paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-summary_ncluster.csv", sep = "")) 
+              } else {
+              fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
+                            paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps_summary.csv", sep = ""),
+                            paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
+                            paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_cluster_ap.csv", sep = ""))              
+              }
+            
+            
             mean <- df %>%
               group_by(ID, condition, sample) %>%
-              summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
+              summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
               mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
 
             mean_cluster <- df %>%
               group_by(ID, condition, cluster, sample) %>%
-              summarise(n = n(), mean = mean(AP_v), sd = sd(AP_v), se = sd/sqrt(n)) %>%
+              summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
               mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
 
+            if("beat_no" %in% colnames(df)) {
+              summary_df <- values$summary_df %>% ungroup() %>%
+                select(ID, condition, Absolute_Summary) %>%
+                unnest(Absolute_Summary) %>%
+                group_by(ID, condition) %>%
+                mutate_all(unlist) %>%
+                summarize_all(unique) %>%
+                rename_all(~stringr::str_replace(., "Absolute_Summary_", "")) %>%
+                pivot_longer(3:last_col()) %>%
+                arrange(ID, name, condition) %>%
+                mutate(name = factor(name))
+              
+              ncluster_df <- values$summary_df %>% select(ID, condition, ncluster, nCluster_Summary) %>%
+                unnest(nCluster_Summary) %>%
+                group_by(ID, condition, ncluster) %>%
+                mutate_all(unlist) %>%
+                summarize_all(unique) %>%
+                pivot_longer(4:last_col()) %>%
+                arrange(ID, name, ncluster, condition) %>% 
+                mutate(name = factor(name))
+            }
+
               write_csv(df, fileName[[1]])
-              write_csv(mean, fileName[[2]])
-              write_csv(mean_cluster, fileName[[3]])
+              write_csv(df2, fileName[[2]])
+              write_csv(mean, fileName[[3]])
+              write_csv(mean_cluster, fileName[[4]])
+              
+              if("beat_no" %in% colnames(df)) {
+              write_csv(summary_df, fileName[[5]])
+              write_csv(ncluster_df, fileName[[6]])
+              }
 
           #create the zip file
           zip(file,fileName)
