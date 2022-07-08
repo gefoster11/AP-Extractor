@@ -69,7 +69,7 @@ find_cluster_bins <- function(x) {
   temp <- NULL
   
   for (i in seq_along(unique(x$condition))) {
-    h <- x %>% filter(condition == unique(x$condition)[[i]]) %>%
+    h <- x %>% plotly::filter(condition == unique(x$condition)[[i]]) %>%
       .$ap_amplitude %>% hist(breaks = "Scott", plot = FALSE)
     temp <- rbind(temp,cbind(condition = unique(x$condition)[[i]],
                              breaks = h$breaks, mids = h$mids, bin_width = h$breaks - lag(h$breaks))) %>%
