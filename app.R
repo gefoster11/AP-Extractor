@@ -28,7 +28,8 @@ packages = c("remotes",
              "kableExtra",
              "DT",
              "ggpubr",
-             "stringr")
+             "stringr"
+             )
 
 package.check <- lapply(
   packages,
@@ -230,10 +231,10 @@ server <- function(input, output, session) {
             df <- AP_extract(locations, signals) %>%
               mutate(ap_keep = TRUE)
             
-            #browser()
             
             # determine clusters
             breaks <- find_cluster_bins(df) # Helper function
+            
             
             h <- df$ap_amplitude[df$ap_include == TRUE] %>% 
               hist(breaks = breaks, plot = FALSE)  
@@ -365,8 +366,8 @@ server <- function(input, output, session) {
       req(values$df, input$conditions, values$beat, values$signals25)
       
       df <- values$df %>% 
-        filter(ap_include == TRUE & ap_keep == TRUE) %>%
-        filter(condition %in% input$conditions)
+        plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        plotly::filter(condition %in% input$conditions)
       
       df %>% select(ap_noise, SNR, condition) %>% group_by(condition) %>% summarize(n = n(), 
                                                                                     "Noise" = round(mean(ap_noise), 3), 
@@ -445,8 +446,8 @@ server <- function(input, output, session) {
 
          
       breaks <- find_cluster_bins(df %>% 
-                                    filter(condition %in% input$conditions) %>%
-                                    filter(ap_include == TRUE & ap_keep == TRUE )) # Helper function
+                                    plotly::filter(condition %in% input$conditions) %>%
+                                    plotly::filter(ap_include == TRUE & ap_keep == TRUE )) # Helper function
       
       h <- df$ap_amplitude[df$ap_include == TRUE & df$ap_keep == TRUE & df$cluster %in% input$conditions] %>% 
         hist(breaks = breaks, plot = FALSE)  
@@ -494,8 +495,8 @@ server <- function(input, output, session) {
       req(values$df)
       
       df <- values$df %>% 
-        filter(ap_include == TRUE & ap_keep == TRUE) %>%
-        filter(condition %in% input$conditions)
+        plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        plotly::filter(condition %in% input$conditions)
       
       h1 <- df$inter_ap_int[df$inter_ap_int < 600] %>% 
         hist(breaks = "Scott", plot = FALSE)
@@ -525,8 +526,8 @@ server <- function(input, output, session) {
       
       temp <- df %>% 
         unnest(data) %>%
-        filter(ap_include == TRUE & ap_keep == TRUE) %>%
-        filter(condition %in% input$conditions)
+        plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        plotly::filter(condition %in% input$conditions)
       
       SelectedCluster <- input$Cluster
       
@@ -535,7 +536,7 @@ server <- function(input, output, session) {
       if (SelectedCluster == "ALL") {
         temp2 <- temp
       } else {
-        temp2 <- temp %>% filter(cluster == as.numeric(SelectedCluster))
+        temp2 <- temp %>% plotly::filter(cluster == as.numeric(SelectedCluster))
       }
 
     numAP <- length(unique(temp2$ap_no))  
@@ -599,26 +600,77 @@ server <- function(input, output, session) {
         summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
 
-      FigC <- mean_cluster %>% ungroup() %>%
-        group_by(breaks) %>%
-        group_map(~ plot_ly(data=.,
+      # FigC <- mean_cluster %>% ungroup() %>%
+      #   group_by(breaks) %>%
+      #   group_map(~ plot_ly(data=.,
+      #                       x = ~sample,
+      #                       y = ~mean,
+      #                       showlegend = FALSE,
+      #                       #color = ~breaks,
+      #                       type = "scatter", mode="lines") %>%
+      #               add_ribbons(  x = ~sample,
+      #                             ymin = ~lower95,
+      #                             ymax = ~upper95,
+      #                             name = "95%CI",
+      #                             showlegend = FALSE,
+      #                             line = list(color = "grey", dash = 'dot', width = 1),
+      #                             fillcolor = 'rgba(7, 164, 181, 0.2)'
+      #               ) %>%
+      #               layout(yaxis = list(title = "MSNA (mV)", fixedrange = FALSE),
+      #                      xaxis = list(title = "", showticklabels = FALSE))
+      #   ) %>%
+      #   subplot(nrows = 1, shareX = TRUE, shareY=TRUE)
+      
+      #browser()
+      
+      panel <- . %>% plot_ly(data=.,
                             x = ~sample,
                             y = ~mean,
                             showlegend = FALSE,
                             #color = ~breaks,
                             type = "scatter", mode="lines") %>%
-                    add_ribbons(  x = ~sample,
-                                  ymin = ~lower95,
-                                  ymax = ~upper95,
-                                  name = "95%CI",
-                                  showlegend = FALSE,
-                                  line = list(color = "grey", dash = 'dot', width = 1),
-                                  fillcolor = 'rgba(7, 164, 181, 0.2)'
-                    ) %>%
-                    layout(yaxis = list(title = "MSNA (mV)", fixedrange = FALSE),
-                           xaxis = list(title = "", showticklabels = FALSE))
+        add_ribbons(  x = ~sample,
+                      ymin = ~lower95,
+                      ymax = ~upper95,
+                      name = "95%CI",
+                      showlegend = FALSE,
+                      line = list(color = "grey", dash = 'dot', width = 1),
+                      fillcolor = 'rgba(7, 164, 181, 0.2)'
         ) %>%
-        subplot(nrows = 1, shareX = TRUE, shareY=TRUE)
+        add_annotations(
+          text = ~unique(breaks),
+          x = 0.5,
+          y = 1,
+          yref = "paper",
+          xref = "paper",
+          yanchor = "bottom",
+          showarrow = FALSE,
+          font = list(size = 10)
+        ) %>%
+        layout(
+          showlegend = FALSE,
+          shapes = list(
+            type = "rect",
+            x0 = 0,
+            x1 = 1,
+            xref = "paper",
+            y0 = 0,
+            y1 = 16,
+            yanchor = 1,
+            yref = "paper",
+            ysizemode = "pixel",
+            fillcolor = toRGB("gray80"),
+            line = list(color = "transparent")),
+          yaxis = list(title = "MSNA (mV)", 
+                       fixedrange = FALSE),
+          xaxis = list(title = "", 
+                       showticklabels = FALSE))
+        
+      
+      FigC <- mean_cluster %>% ungroup() %>%
+           group_by(breaks) %>%
+            do(p = panel(.)) %>%
+             subplot(nrows = ceiling(NROW(.)/5), shareX = TRUE, shareY=TRUE)
 
       subplot(Fig, FigC, nrows = 2) %>%
         layout(clickmode = "event+select") %>%
@@ -635,8 +687,8 @@ server <- function(input, output, session) {
       req(values$df, input$conditions, values$beat, values$signals25)
       
       df <- values$df %>% 
-        filter(ap_include == TRUE & ap_keep == TRUE) %>%
-        filter(condition %in% input$conditions)
+        plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        plotly::filter(condition %in% input$conditions)
       
       df <- df %>% select(condition, ap_no, ap_amplitude, ap_latency, inter_ap_int, SNR) %>%
         pivot_longer(cols = c(ap_amplitude:SNR), names_to = "variable")
@@ -661,16 +713,16 @@ server <- function(input, output, session) {
       #browser()
       
       df <- values$df %>% 
-        filter(ap_include == TRUE & ap_keep == TRUE) %>%
-        filter(condition %in% input$conditions2)
+        plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+        plotly::filter(condition %in% input$conditions2)
       
       t_min <- df$ap_time %>% min() 
       t_max <- df$ap_time %>% max()
       
-      signals25 <- values$signals25 %>% filter(MSNA_time >= t_min & MSNA_time <= t_max)
+      signals25 <- values$signals25 %>% plotly::filter(MSNA_time >= t_min & MSNA_time <= t_max)
       ap_linerange <- df$ap_time %>% cbind(ap_time = ., lower = 0, upper = 1) %>% as.data.frame() %>% pivot_longer(c("upper", "lower"))
       
-      signals10 <- values$signals10khz %>% filter(time >= t_min & time <= t_max)
+      signals10 <- values$signals10khz %>% plotly::filter(time >= t_min & time <= t_max)
       
       figA <- plot_ly() %>%
         add_lines(data = signals25,
@@ -724,12 +776,12 @@ server <- function(input, output, session) {
       
       df <- values$df 
       
-      ap_time <- df %>% filter(ap_include == TRUE & ap_keep == TRUE) %>% filter(condition %in% input$conditions) %>% 
+      ap_time <- df %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>% plotly::filter(condition %in% input$conditions) %>% 
         group_by(condition, ap_no) %>% 
         summarise(TIME = unique(ap_time)) %>% select(!ap_no) %>% group_by(condition) %>% nest(spike = TIME)
-      R_time <- df %>% filter(condition %in% input$conditions) %>% group_by(condition, beat_no) %>% summarise(TIME = unique(beat_time)) %>% select(!beat_no) %>% 
+      R_time <- df %>% plotly::filter(condition %in% input$conditions) %>% group_by(condition, beat_no) %>% summarise(TIME = unique(beat_time)) %>% select(!beat_no) %>% 
         group_by(condition) %>% nest(R = TIME)
-      burst_time <- df %>% filter(condition %in% input$conditions) %>% select(condition, beat_no, burst_time) %>% filter(!is.na(burst_time)) %>% group_by(condition, beat_no) %>%
+      burst_time <- df %>% plotly::filter(condition %in% input$conditions) %>% select(condition, beat_no, burst_time) %>% plotly::filter(!is.na(burst_time)) %>% group_by(condition, beat_no) %>%
         summarise(TIME = unique(burst_time)) %>% select(!beat_no) %>% group_by(condition) %>% nest(burst = TIME)
       
     cor_df <- full_join(R_time, burst_time, by = "condition") %>% full_join(., ap_time, by = "condition")
@@ -816,10 +868,10 @@ server <- function(input, output, session) {
           owd <- setwd(tempdir())
           on.exit(setwd(owd))
             
-            df <- values$df %>% unnest(data) %>% filter(ap_include == TRUE & ap_keep == TRUE) %>%
-              filter(condition %in% input$conditions)
-            df2 <- values$df %>% select(!data) %>% filter(ap_include == TRUE & ap_keep == TRUE) %>%
-                                          filter(condition %in% input$conditions)
+            df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+              plotly::filter(condition %in% input$conditions)
+            df2 <- values$df %>% select(!data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+              plotly::filter(condition %in% input$conditions)
 
             if("beat_no" %in% colnames(df)) {            
               fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
