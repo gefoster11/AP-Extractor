@@ -81,9 +81,28 @@ find_cluster_bins <- function(x) {
   
   bin_centre <- seq(from = max_bin_mid, to = min_amp-(binwidth/2), by = binwidth*-1) %>% rev()
   breaks <- seq(from = min(bin_centre) - binwidth/2, 
-                to = max(bin_centre) + binwidth/2 + binwidth, by = binwidth) # added +binwidth to deal with breaks not spanning x range on April 6 2022.
+                to = max(bin_centre) + binwidth/2, by = binwidth) # added +binwidth to deal with breaks not spanning x range on April 6 2022.
   breaks  
 }
+
+#### Find Cluster Bins Version 2 ####
+find_cluster_bins2 <- function(x, base_cond) {
+  
+  #browser()
+  
+  h <- x %>% plotly::filter(condition == base_cond) %>%
+      .$ap_amplitude %>% hist(breaks = "Scott", plot = FALSE)
+  
+  binwidth <- h$breaks[[2]] - h$breaks[[1]] # %>% round(2) removed on April 6 2022
+  max_bin_mid <- max(x$ap_amplitude)
+  min_amp <- min(x$ap_amplitude)
+  
+  bin_centre <- seq(from = max_bin_mid, to = min_amp-(binwidth/2), by = binwidth*-1) %>% rev()
+  breaks <- seq(from = min(bin_centre) - binwidth/2, 
+                to = max(bin_centre) + binwidth/2, by = binwidth) # added +binwidth to deal with breaks not spanning x range on April 6 2022.
+  breaks  
+}
+
 
 #### Generates an index ####
 index <- function(x) {
@@ -186,9 +205,9 @@ link_AP <- function(times, ap_beat, APs, signal) {
 
 #### AP_Summary
 Absolute_Summary <- function(df) {
+
   temp <- df %>%
     filter(ap_include == TRUE | is.na(ap_include) & ap_keep == TRUE | is.na(ap_keep)) %>% ungroup() %>%
-    mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) *10) %>% round()) %>% relocate(ncluster, .after = cluster) %>%
     group_by(ID, condition) %>%
     nest() %>%
     mutate(
@@ -234,6 +253,9 @@ Absolute_Summary <- function(df) {
       mean_ap_amplitude = map(data, ~ {
         mean(.x$ap_amplitude, na.rm = TRUE)
       }),
+      mean_ap_namplitude = map(data, ~ {
+        mean(.x$ap_namplitude, na.rm = TRUE)
+      }),
       mean_ap_burstLatency = map(data, ~ {
         mean(.x$ap_burst_latency, na.rm = TRUE)
       }),
@@ -254,7 +276,7 @@ Absolute_Summary <- function(df) {
           .$n_cluster %>% mean(., na.rm = TRUE)
       }),
       mean_maxCluster_perBurst = map(data, ~ {
-        .x %>% filter(!is.na(burst_time) & !is.na(cluster)) %>% group_by(beat_no) %>% summarise(max_cluster = max(cluster, na.rm = TRUE)) %>%
+        .x %>% filter(!is.na(burst_time) & !is.na(cluster)) %>% group_by(beat_no) %>% summarise(max_cluster = max(as.integer(cluster), na.rm = TRUE)) %>%
           .$max_cluster %>% mean(., na.rm = TRUE)
       }),
       mean_ncluster_perBeat = map(data, ~ {
@@ -262,12 +284,24 @@ Absolute_Summary <- function(df) {
           .$n_cluster %>% mean(., na.rm = TRUE)
       }),
       mean_maxnCluster_perBurst = map(data, ~ {
-        .x %>% filter(!is.na(burst_time) & !is.na(ncluster)) %>% group_by(beat_no) %>% summarise(max_cluster = max(ncluster, na.rm = TRUE)) %>%
+        .x %>% filter(!is.na(burst_time) & !is.na(ncluster)) %>% group_by(beat_no) %>% summarise(max_cluster = max(as.integer(ncluster), na.rm = TRUE)) %>%
           .$max_cluster %>% mean(., na.rm = TRUE)
       }),
       mean_burstAmplitude = map(data, ~{
         .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstAmplitude = unique(burst_amplitude)) %>%
           .$BurstAmplitude %>% mean(., na.rm = TRUE)
+      }),
+      mean_burstNAmplitude = map(data, ~{
+        .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstNAmplitude = unique(burst_namplitude)) %>%
+          .$BurstNAmplitude %>% mean(., na.rm = TRUE)
+      }),
+      mean_burstArea = map(data, ~{
+        .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstArea = unique(burst_area)) %>%
+          .$BurstArea %>% mean(., na.rm = TRUE)
+      }),
+      mean_burstNArea = map(data, ~{
+        .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstNArea = unique(burst_narea)) %>%
+          .$BurstNArea %>% mean(., na.rm = TRUE)
       }),
       mean_burstFrequency = map(data, ~ {
         (length(unique(.x$burst_time[!is.na(.x$burst_time)])) /  (max(.x$beat_time) - min(.x$beat_time))) * 60
@@ -287,9 +321,10 @@ Absolute_Summary <- function(df) {
 
 #### Normalized Cluster Summary
 nCluster_Summary <- function(df) {
+  
+  #browser()
   temp <- df %>%
     filter(ap_include == TRUE | is.na(ap_include) & ap_keep == TRUE | is.na(ap_keep)) %>% ungroup() %>%
-    mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) *10) %>% round()) %>% relocate(ncluster, .after = cluster) %>%
     unnest(Absolute_Summary, names_sep = "_") %>%
     group_by(ID, condition, ncluster) %>%
     nest() %>%
@@ -361,6 +396,18 @@ nCluster_Summary <- function(df) {
       mean_burstAmplitude = map(data, ~{
         .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstAmplitude = unique(burst_amplitude)) %>%
           .$BurstAmplitude %>% mean(., na.rm = TRUE)
+      }),
+      mean_burstNAmplitude = map(data, ~{
+        .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstNAmplitude = unique(burst_namplitude)) %>%
+          .$BurstNAmplitude %>% mean(., na.rm = TRUE)
+      }),
+      mean_burstArea = map(data, ~{
+        .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstArea = unique(burst_area)) %>%
+          .$BurstArea %>% mean(., na.rm = TRUE)
+      }),
+      mean_burstNArea = map(data, ~{
+        .x %>% filter(!is.na(burst_time)) %>% group_by(beat_no) %>% summarise(BurstNArea = unique(burst_narea)) %>%
+          .$BurstNArea %>% mean(., na.rm = TRUE)
       }),
       mean_burstFrequency = map(data, ~ {
         (length(unique(.x$burst_time[!is.na(.x$burst_time)])) /  mean(unlist(.x$Absolute_Summary_dt))) * 60
