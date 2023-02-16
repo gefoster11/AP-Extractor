@@ -80,6 +80,11 @@ ui <- fluidPage(
             tags$hr(),
             
             # ---- Input: Analysis conditions ----
+            selectizeInput('base', "Choose Baseline Conditions", choices = "", multiple = FALSE, width = "90%"),
+            bsTooltip("base", "Choose baseline condition", 
+                      "right", options = list(container = "body")),
+            
+            # ---- Input: Analysis conditions ----
             selectizeInput('conditions', "Choose Analysis Conditions", choices = "", multiple = TRUE, width = "90%"),
             bsTooltip("conditions", "Choose Conditions to Analyze", 
                       "right", options = list(container = "body")),
@@ -106,7 +111,7 @@ ui <- fluidPage(
             
             # ---- Reference ----
             tags$div(
-              HTML("<p>2022; Created by Glen Foster</p><br>")),
+              HTML("<p>2023; Created by Glen Foster</p><br>")),
 
         ),
         
@@ -226,15 +231,18 @@ server <- function(input, output, session) {
             # determine and set fs
             fs <- round(1/(signals$time[2] - signals$time[1]), 1)
             values$fs <- fs
-
+            
             withProgress(message = "Extracting APs", {
             df <- AP_extract(locations, signals) %>%
               mutate(ap_keep = TRUE)
             
+            #browser()
+            
+            myChoices <- unique(df$condition)
+            updateSelectizeInput(session, "base", choices = myChoices, selected = myChoices[[1]])
             
             # determine clusters
-            breaks <- find_cluster_bins(df) # Helper function
-            
+            breaks <- find_cluster_bins2(x = df, base_cond = myChoices[[1]]) # Helper function
             
             h <- df$ap_amplitude[df$ap_include == TRUE] %>% 
               hist(breaks = breaks, plot = FALSE)  
@@ -258,15 +266,16 @@ server <- function(input, output, session) {
               arrange(ap_no)
             
             df <- df %>%
-              mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% round()) %>%
+              mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% ceiling()) %>%
               relocate(ncluster, .after = cluster)
             
             values$df <- df
             values$signals10khz <- signals
             values$times <- signals %>% group_by(ID, condition) %>% summarise(t_min = min(time), t_max = max(time))
+  
             
-            myChoices <- unique(df$condition)
             myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
+            
             
             updateSelectizeInput(session, "conditions", choices = myChoices, selected = myChoices)
             updateSelectizeInput(session, "Cluster", choices = myClusters, selected = "ALL")
@@ -318,7 +327,7 @@ server <- function(input, output, session) {
     })
     
     # ---- Observe: summarize data - summary_df ----
-    observe({
+    observe(priority = -1, {
       
       req(input$Signals_10KHz$datapath,
           input$Locations$datapath,
@@ -328,7 +337,7 @@ server <- function(input, output, session) {
           input$conditions)
 
       df <- values$df
-
+      
       if("beat_no" %in% colnames(df)) {
 
               summary_df <- Absolute_Summary(df)
@@ -439,25 +448,37 @@ server <- function(input, output, session) {
     # ---- Re-cluster data when conditions change ----
     observe(priority = 1, {
       
-      req(values$df, input$conditions)
+      req(values$df, input$conditions, input$base)
     
       df <- values$df %>% 
         select(!c(mid, lower_bound))
 
-         
-      breaks <- find_cluster_bins(df %>% 
+      #browser()
+      
+      base_cond <- if(input$base %in% input$conditions) {
+        input$base
+      } else {
+        input$conditions[[1]]
+      }
+      
+      breaks <- find_cluster_bins2(x = df %>% 
                                     plotly::filter(condition %in% input$conditions) %>%
-                                    plotly::filter(ap_include == TRUE & ap_keep == TRUE )) # Helper function
+                                    plotly::filter(ap_include == TRUE & ap_keep == TRUE),
+                                   base_cond = base_cond) # Helper function
       
       h <- df$ap_amplitude[df$ap_include == TRUE & df$ap_keep == TRUE & df$cluster %in% input$conditions] %>% 
         hist(breaks = breaks, plot = FALSE)  
       
-      #browser()
+      ap_base_max <- df %>% 
+        plotly::filter(condition == base_cond) %>%
+        plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>% select(ap_amplitude) %>% max(., na.rm = TRUE)
       
       df <- df %>% 
         ungroup() %>% 
         mutate(breaks = cut(.$ap_amplitude, breaks = h$breaks), 
-               cluster = cut(.$ap_amplitude, breaks = h$breaks, labels = FALSE, ordered_result = TRUE)) %>%
+               cluster = cut(.$ap_amplitude, breaks = h$breaks, labels = FALSE, ordered_result = TRUE),
+               ap_namplitude = (ap_amplitude/ap_base_max)*100) %>%
+        relocate(ap_namplitude, .after = ap_amplitude) %>%
         group_by(cluster) %>% 
         nest()
       
@@ -471,13 +492,23 @@ server <- function(input, output, session) {
           arrange(ap_no)
        
        df <- df %>%
-         mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% round()) %>%
+         mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% ceiling()) %>%
          relocate(ncluster, .after = cluster)
        
-        
         if("beat_no" %in% colnames(df)) {
+          burstamp_base_max <- df %>% 
+            plotly::filter(condition == base_cond) %>%
+            plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>% select(burst_amplitude) %>% max(., na.rm = TRUE)
+          burstarea_base_max <- df %>% 
+            plotly::filter(condition == base_cond) %>%
+            plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>% select(burst_area) %>% max(., na.rm = TRUE)
+          
+          
           df <- df %>% arrange(beat_no, ap_no) %>% 
-            relocate(mid, lower_bound, .after = breaks)
+            mutate(burst_namplitude = (burst_amplitude/burstamp_base_max)*100,
+                   burst_narea = (burst_area/burstarea_base_max)*100) %>%
+            relocate(mid, lower_bound, .after = breaks) %>%
+            relocate(burst_namplitude, burst_narea, .after = burst_area)
         }
 
         myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
@@ -793,7 +824,7 @@ server <- function(input, output, session) {
       ggplot(aes(x = burst_ECG)) +
       geom_histogram(binwidth = 0.05) + #50ms binwidth
       geom_vline(xintercept = 0, linetype = "dotted") +
-      scale_x_continuous(expand = c(0,0), limits = c(-5, +5), breaks = c(-5,-4,-3,-2,-1,0,1,2,3,4,5)) +
+      scale_x_continuous(expand = c(0,0), limits = c(-3, +3), breaks = c(-3,-2,-1,0,1,2,3)) +
       labs(x = "Time (s)", y = "Counts/bin") +
       facet_grid(condition ~ .) +
       ggtitle("MSNA Burst vs ECG R") +
@@ -803,7 +834,7 @@ server <- function(input, output, session) {
       ggplot(aes(x = ap_ECG)) +
       geom_histogram(binwidth = 0.05) + #50ms binwidth
       geom_vline(xintercept = 0, linetype = "dotted") +
-      scale_x_continuous(expand = c(0,0), limits = c(-5, +5), breaks = c(-5,-4,-3,-2,-1,0,1,2,3,4,5)) +
+      scale_x_continuous(expand = c(0,0), limits = c(-3, +3), breaks = c(-3,-2,-1,0,1,2,3)) +
       labs(x = "Time (s)", y = "Counts/bin") +
       facet_grid(condition ~ .) +
       ggtitle("MSNA AP vs ECG R") +
