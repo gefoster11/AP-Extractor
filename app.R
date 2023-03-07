@@ -900,9 +900,9 @@ server <- function(input, output, session) {
           on.exit(setwd(owd))
             
             df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
-              plotly::filter(condition %in% input$conditions)
-            df2 <- values$df %>% select(!data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
-              plotly::filter(condition %in% input$conditions)
+              plotly::filter(condition %in% input$conditions) %>% select(ID, condition, ap_time, ap_no, sample, ap_v)
+            df2 <- values$df %>% select(!data) %>% plotly::filter(condition %in% input$conditions)
+            df2 <- df2[(df2$ap_include != FALSE | is.na(df2$ap_include)) & (df2$ap_keep != FALSE | is.na(df2$ap_keep)),]
 
             if("beat_no" %in% colnames(df)) {            
               fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
