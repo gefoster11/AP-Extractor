@@ -630,29 +630,6 @@ server <- function(input, output, session) {
         group_by(ID, breaks, sample) %>%
         summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
         mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
-
-      # FigC <- mean_cluster %>% ungroup() %>%
-      #   group_by(breaks) %>%
-      #   group_map(~ plot_ly(data=.,
-      #                       x = ~sample,
-      #                       y = ~mean,
-      #                       showlegend = FALSE,
-      #                       #color = ~breaks,
-      #                       type = "scatter", mode="lines") %>%
-      #               add_ribbons(  x = ~sample,
-      #                             ymin = ~lower95,
-      #                             ymax = ~upper95,
-      #                             name = "95%CI",
-      #                             showlegend = FALSE,
-      #                             line = list(color = "grey", dash = 'dot', width = 1),
-      #                             fillcolor = 'rgba(7, 164, 181, 0.2)'
-      #               ) %>%
-      #               layout(yaxis = list(title = "MSNA (mV)", fixedrange = FALSE),
-      #                      xaxis = list(title = "", showticklabels = FALSE))
-      #   ) %>%
-      #   subplot(nrows = 1, shareX = TRUE, shareY=TRUE)
-      
-      #browser()
       
       panel <- . %>% plot_ly(data=.,
                             x = ~sample,
@@ -899,8 +876,10 @@ server <- function(input, output, session) {
           owd <- setwd(tempdir())
           on.exit(setwd(owd))
             
+          #browser()
+          
             df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
-              plotly::filter(condition %in% input$conditions) %>% select(ID, condition, ap_time, ap_no, sample, ap_v)
+              plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, beat_no, ap_time, ap_no, sample, ap_v)
             df2 <- values$df %>% select(!data) %>% plotly::filter(condition %in% input$conditions)
             df2 <- df2[(df2$ap_include != FALSE | is.na(df2$ap_include)) & (df2$ap_keep != FALSE | is.na(df2$ap_keep)),]
 
