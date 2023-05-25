@@ -271,7 +271,7 @@ server <- function(input, output, session) {
             
             values$df <- df
             values$signals10khz <- signals
-            values$times <- signals %>% group_by(ID, condition) %>% summarise(t_min = min(time), t_max = max(time))
+            values$times <- signals %>% group_by(ID, condition) %>% summarise(t_min = min(time, na.rm = TRUE), t_max = max(time, na.rm = TRUE))
   
             
             myClusters <- c("ALL", unique(df$cluster) %>% sort(.))
@@ -301,7 +301,7 @@ server <- function(input, output, session) {
 
       tryCatch( {
         # load locations
-        
+        #browser()
         beat <- read_csv(file = input$MSNAapp_file$datapath)
 
         # load signals
