@@ -148,6 +148,7 @@ link_AP <- function(times, ap_beat, APs, signal) {
     incProgress(amount = 1/length(ap_beat$beat_no))
     # deal with the case of no APs associated with a beat
     if(APs[APs$ap_time >= ap_beat$tmin[[i]] & APs$ap_time <= ap_beat$tmax[[i]],] %>% nrow() == 0) { 
+      
       # extract raw MSNA to determine noise
       temp_df <- signal[signal$time >= ap_beat$tmin[[i]] & signal$time <= ap_beat$tmax[[i]],] %>% 
         select(ID, condition, MSNA_raw) %>% group_by(ID, condition) %>%
@@ -206,10 +207,12 @@ link_AP <- function(times, ap_beat, APs, signal) {
 #### AP_Summary
 Absolute_Summary <- function(df) {
 
+  #browser()
+  
   temp <- df %>%
     filter(ap_include == TRUE | is.na(ap_include) & ap_keep == TRUE | is.na(ap_keep)) %>% ungroup() %>%
     group_by(ID, condition) %>%
-    nest() %>%
+    nest() %>% filter(!is.na(ID)) %>%
     mutate(
       dt = map(data, ~ {
         max(.x$beat_time) - min(.x$beat_time)
@@ -327,7 +330,7 @@ nCluster_Summary <- function(df) {
     filter(ap_include == TRUE | is.na(ap_include) & ap_keep == TRUE | is.na(ap_keep)) %>% ungroup() %>%
     unnest(Absolute_Summary, names_sep = "_") %>%
     group_by(ID, condition, ncluster) %>%
-    nest() %>%
+    nest() %>% filter(!is.na(ID)) %>%
     mutate(
       no_ap = map(data, ~ {
         length(.x$ap_no[!is.na(.x$ap_no)])
