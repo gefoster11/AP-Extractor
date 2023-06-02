@@ -336,17 +336,21 @@ server <- function(input, output, session) {
           values$df,
           input$conditions)
 
+      #browser()
+      
       df <- values$df
       
       if("beat_no" %in% colnames(df)) {
 
+              df[is.na(df$ap_include) | df$ap_include == FALSE | df$ap_keep == FALSE, c(3:16, 18:20)] <- NA # added June 2, 2023 to fix removal of bursts accidentally when burst and excluded AP align.
+              
               summary_df <- Absolute_Summary(df)
               summary_df <- nCluster_Summary(summary_df %>% unnest(data))
 
               values$summary_df <- summary_df
       }
 
-     
+     values $df <- df
 
     })
     
@@ -494,15 +498,16 @@ server <- function(input, output, session) {
        df <- df %>%
          mutate(ncluster = (cluster/max(cluster, na.rm = TRUE) * 10) %>% ceiling()) %>%
          relocate(ncluster, .after = cluster)
-       
+
+       #browser()
+              
         if("beat_no" %in% colnames(df)) {
           burstamp_base_max <- df %>% 
             plotly::filter(condition == base_cond) %>%
-            plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>% select(burst_amplitude) %>% max(., na.rm = TRUE)
+            select(burst_amplitude) %>% max(., na.rm = TRUE)
           burstarea_base_max <- df %>% 
             plotly::filter(condition == base_cond) %>%
-            plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>% select(burst_area) %>% max(., na.rm = TRUE)
-          
+            select(burst_area) %>% max(., na.rm = TRUE)
           
           df <- df %>% arrange(beat_no, ap_no) %>% 
             mutate(burst_namplitude = (burst_amplitude/burstamp_base_max)*100,
