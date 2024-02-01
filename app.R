@@ -883,12 +883,13 @@ server <- function(input, output, session) {
             
           #browser()
           
-            df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
-              plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, beat_no, ap_time, ap_no, sample, ap_v)
             df2 <- values$df %>% select(!data) %>% plotly::filter(condition %in% input$conditions)
             df2 <- df2[(df2$ap_include != FALSE | is.na(df2$ap_include)) & (df2$ap_keep != FALSE | is.na(df2$ap_keep)),]
 
             if("beat_no" %in% colnames(df)) {            
+              df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+                    plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, beat_no, ap_time, ap_no, sample, ap_v)
+              
               fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
                             paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps_summary.csv", sep = ""),
                            paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
@@ -896,6 +897,9 @@ server <- function(input, output, session) {
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-summary.csv", sep = ""),
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-summary_ncluster.csv", sep = "")) 
               } else {
+              df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+                    plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, ap_time, ap_no, sample, ap_v)
+                                    
               fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
                             paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps_summary.csv", sep = ""),
                             paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
