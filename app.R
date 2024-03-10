@@ -196,6 +196,10 @@ ui <- fluidPage(
 # ---- Define server logic ----
 server <- function(input, output, session) {
   
+  session$onSessionEnded(function() {
+    stopApp()
+  })
+  
     # ---- initialize reactive values ----
     values <- reactiveValues(
         # fs = NULL, # sample frequency
@@ -344,13 +348,28 @@ server <- function(input, output, session) {
 
               df[is.na(df$ap_include) | df$ap_include == FALSE | df$ap_keep == FALSE, c(3:16, 18:20)] <- NA # added June 2, 2023 to fix removal of bursts accidentally when burst and excluded AP align.
               
+              #Recalc latencies with ap keep / ap include == FALSE
+              df <- df %>% 
+                mutate(SNR = abs(ap_minimum/ap_noise),
+                       ap_burst_latency = ap_time - burst_latency + (RRI/2) - beat_time,
+                       ap_latency = ap_time - beat_time,
+                ) %>%
+                arrange(beat_no, ap_no) %>%
+                group_by(beat_no) %>% 
+                mutate(inter_ap_int = (ap_time - lag(ap_time))*1000,
+                       ID = factor(ID),
+                       condition = factor(condition),
+                       cluster = factor(cluster)
+                )
+              
+              
               summary_df <- Absolute_Summary(df)
               summary_df <- nCluster_Summary(summary_df %>% unnest(data))
 
               values$summary_df <- summary_df
       }
 
-     values $df <- df
+     #values $df <- df # can this be removed so that APs set to remove still display in Table.
 
     })
     
@@ -366,6 +385,8 @@ server <- function(input, output, session) {
     output$data <- DT::renderDataTable({
       req(values$df, input$conditions)
 
+      #browser()
+      
         df <- values$df
 
         return(df %>% 
@@ -844,6 +865,33 @@ server <- function(input, output, session) {
         
         df$ap_keep[which(df$ap_no %in% ap_no)] <- !df$ap_keep[which(df$ap_no %in% ap_no)]
         
+        df_selected <- which(df$ap_no %in% ap_no)
+        
+        removed <- values$removed
+        
+        selected_row <- df[df_selected,]
+
+        if (!(selected_row$ap_no %in% removed$ap_no)) {
+          #remove data from data and add removed row to values$removed
+          values$removed <- values$removed %>% rbind(., selected_row)
+          df[df_selected, c(3:5, 7:11)] <- NA
+        }
+        
+        #Recalc latencies with ap keep / ap include == FALSE
+        df <- df %>% 
+          mutate(SNR = abs(ap_minimum/ap_noise),
+                 ap_burst_latency = ap_time - burst_latency + (RRI/2) - beat_time,
+                 ap_latency = ap_time - beat_time,
+          ) %>%
+          arrange(beat_no, ap_no) %>%
+          group_by(beat_no) %>% 
+          mutate(inter_ap_int = (ap_time - lag(ap_time))*1000,
+                 ID = factor(ID),
+                 condition = factor(condition),
+                 cluster = factor(cluster)
+          )
+        
+        
         values$df <- df
         
       }
@@ -853,17 +901,80 @@ server <- function(input, output, session) {
     # ---- Observe: table click ----
     observeEvent(input$data_rows_selected, {
 
+      #browser()
+      
       df_selected <- input$data_rows_selected
-      df <- values$df
+      df <- values$df %>% mutate(breaks = as.character(breaks))
       df$ap_keep[df_selected] <- !df$ap_keep[df_selected]
+      
+      removed <- values$removed
+
+      selected_row <- df[df_selected,]
+      
+      if (selected_row$ap_no %in% removed$ap_no) {
+       #return removed data to data
+        df <- df %>% mutate(breaks = as.character(breaks))
+        df[df_selected, ] <- removed[removed$ap_no == selected_row$ap_no,]
+        values$removed <- removed %>% filter(ap_no != selected_row$ap_no)
+        #restore ap_keep
+        df$ap_keep[df_selected] <- !df$ap_keep[df_selected]
+            
+        
+      }
+      
+      if (!(selected_row$ap_no %in% removed$ap_no)) {
+        #remove data from data and add removed row to values$removed
+        values$removed <- values$removed %>% rbind(., selected_row)
+        df[df_selected, c(3:5, 7:11)] <- NA
+      }
+      
+      #Recalc latencies with ap keep / ap include == FALSE
+      df <- df %>% 
+       mutate(SNR = abs(ap_minimum/ap_noise),
+              ap_burst_latency = ap_time - burst_latency + (RRI/2) - beat_time,
+              ap_latency = ap_time - beat_time,
+      ) %>%
+         arrange(beat_no, ap_no) %>%
+         group_by(beat_no) %>% 
+         mutate(inter_ap_int = (ap_time - lag(ap_time))*1000,
+                ID = factor(ID),
+                condition = factor(condition),
+                cluster = factor(cluster)
+         )
+      
       values$df <- df
       
     })
 
     # ---- Observe: reset ----
     observeEvent(input$reset, {
-        df <- values$df
-        df$ap_keep <- TRUE
+      
+      #browser()
+      
+        df <- values$df %>% mutate(breaks = as.character(breaks))
+        removed <- values$removed 
+        
+        #reset ap_keep within removed data
+        removed$ap_keep <- !removed$ap_keep
+        #return all values stored within values$removed to df
+        which_rows <- which(df$ap_no %in% removed$ap_no)
+        
+        df[which_rows, ] <- removed %>% mutate(breaks = as.character(breaks))
+        
+        #Recalc latencies with ap keep / ap include == FALSE
+        df <- df %>% 
+          mutate(SNR = abs(ap_minimum/ap_noise),
+                 ap_burst_latency = ap_time - burst_latency + (RRI/2) - beat_time,
+                 ap_latency = ap_time - beat_time,
+          ) %>%
+          arrange(beat_no, ap_no) %>%
+          group_by(beat_no) %>% 
+          mutate(inter_ap_int = (ap_time - lag(ap_time))*1000,
+                 ID = factor(ID),
+                 condition = factor(condition),
+                 cluster = factor(cluster)
+          )
+        
         values$df <- df
     })
     
@@ -883,12 +994,15 @@ server <- function(input, output, session) {
             
           #browser()
           
+            # df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
+            #   plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, beat_no, ap_time, ap_no, sample, ap_v)
             df2 <- values$df %>% select(!data) %>% plotly::filter(condition %in% input$conditions)
             df2 <- df2[(df2$ap_include != FALSE | is.na(df2$ap_include)) & (df2$ap_keep != FALSE | is.na(df2$ap_keep)),]
 
-            if("beat_no" %in% colnames(df)) {            
+            if("beat_no" %in% colnames(df2)) {   
+              
               df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
-                    plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, beat_no, ap_time, ap_no, sample, ap_v)
+                plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, beat_no, ap_time, ap_no, sample, ap_v)
               
               fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
                             paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps_summary.csv", sep = ""),
@@ -897,9 +1011,10 @@ server <- function(input, output, session) {
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-summary.csv", sep = ""),
                           paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-summary_ncluster.csv", sep = "")) 
               } else {
+              
               df <- values$df %>% unnest(data) %>% plotly::filter(ap_include == TRUE & ap_keep == TRUE) %>%
-                    plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, ap_time, ap_no, sample, ap_v)
-                                    
+                  plotly::filter(condition %in% input$conditions) %>% select(ID, condition, cluster, ncluster, ap_time, ap_no, sample, ap_v)  
+                
               fileName <- c(paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps.csv", sep = ""),
                             paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-all_aps_summary.csv", sep = ""),
                             paste(tools::file_path_sans_ext(input$Signals_10KHz$name), "-mean_ap.csv", sep = ""),
@@ -917,7 +1032,7 @@ server <- function(input, output, session) {
               summarise(n = n(), mean = mean(ap_v), sd = sd(ap_v), se = sd/sqrt(n)) %>%
               mutate(upper95 = mean + 1.96*se, lower95 = mean - 1.96*se)
 
-            if("beat_no" %in% colnames(df)) {
+            if("beat_no" %in% colnames(df2)) {
               summary_df <- values$summary_df %>% ungroup() %>%
                 select(ID, condition, Absolute_Summary) %>%
                 unnest(Absolute_Summary) %>%
@@ -944,7 +1059,7 @@ server <- function(input, output, session) {
               write_csv(mean, fileName[[3]])
               write_csv(mean_cluster, fileName[[4]])
               
-              if("beat_no" %in% colnames(df)) {
+              if("beat_no" %in% colnames(df2)) {
               write_csv(summary_df, fileName[[5]])
               write_csv(ncluster_df, fileName[[6]])
               }
